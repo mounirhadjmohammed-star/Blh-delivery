@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLH DELIVERY — PWA (v1)</title>
+<meta name="theme-color" content="#1f7a4c">
+<link rel="manifest" href="manifest.json">
+<style>
+:root{--brand:#1f7a4c;--dark:#0f3d27;--muted:#6b7280}
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#fff;color:#111}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e5e7eb;padding:10px;z-index:2}
+.wrap{max-width:1100px;margin:0 auto;padding:10px}
+.row{display:flex;gap:8px;align-items:center}
+.logo{width:42px;height:42px;border-radius:10px;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:800}
+.title{font-weight:800;color:var(--dark)}
+.tabs{display:flex;gap:8px;overflow:auto}
+.tab{border:1px solid #e5e7eb;background:#fff;border-radius:12px;padding:8px 10px;white-space:nowrap;cursor:pointer}
+.tab.active{background:var(--brand);border-color:var(--brand);color:#fff}
+main{padding:12px}
+.grid{display:grid;gap:14px}
+@media(min-width:900px){.grid2{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:1fr 1fr 1fr}}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+input,select,button,textarea{font:inherit}
+input,select,textarea{border:1px solid #e5e7eb;border-radius:10px;padding:10px;width:100%}
+button{border-radius:10px;border:1px solid #e5e7eb;background:#fff;padding:10px 12px;cursor:pointer}
+.btn{background:var(--brand);border-color:var(--brand);color:#fff}
+table{width:100%;border-collapse:collapse}
+th,td{padding:8px;border-top:1px solid #edf0ee;text-align:left;font-size:13px}
+.muted{color:var(--muted);font-size:13px}
+.kpi{display:flex;flex-direction:column;gap:4px;padding:10px;border:1px solid #edf0ee;border-radius:12px}
+.kpi .v{font-weight:800;font-size:20px;color:var(--dark)}
+.pill{display:inline-flex;align-items:center;border-radius:999px;border:1px solid #e5e7eb;padding:4px 10px;font-size:12px;background:#fff}
+.label{width:320px;border:1px dashed #cbd5e1;border-radius:12px;padding:12px}
+.print-area{display:flex;gap:10px;flex-wrap:wrap}
+.small{font-size:12px}
+.login{max-width:420px;margin:20px auto}
+.notice{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;padding:8px;border-radius:10px;margin:10px 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap row" style="justify-content:space-between">
+    <div class="row">
+      <div class="logo">🚚</div>
+      <div style="margin-left:8px">
+        <div class="title">BLH DELIVERY</div>
+        <div class="muted small">v1 — Direction • Livreurs • Clients</div>
+      </div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+</header>
+<main class="wrap">
+  <div class="notice">Utilisation immédiate hors‑ligne locale. Pour “Ajouter à l’écran d’accueil”, hébergez ces fichiers en HTTPS (Netlify/Pages) — le service worker s’activera.</div>
+  <div id="view"></div>
+</main>
+<div id="printRoot" class="print-area" style="display:none"></div>
+
+<script>
+/* ====== Mini base de données (LocalStorage) ====== */
+const STORE='blh_pwa_v1';
+function load(){ try{return JSON.parse(localStorage.getItem(STORE)||'{}')}catch(e){return{}} }
+function save(x){ localStorage.setItem(STORE, JSON.stringify(x)) }
+const db=load();
+
+if(!db.settings) db.settings={ basePrice:450, thresholdKg:10, extraPerKg:30 };
+if(!db.orders) db.orders=[];
+if(!db.users) db.users=[
+  {u:'admin',p:'admin',role:'admin',name:'Direction'},
+  {u:'livreur',p:'livreur',role:'courier',name:'Livreur Démo'},
+  {u:'client',p:'client',role:'client',name:'Client Démo'}
+];
+if(!db.seeded){
+  db.orders=[
+    {id:'BLH-1001',client:'Khaled A',phone:'+213555112233',wilaya:'Alger',address:'Hydra',weight:5,cod:3500,price:450,status:'En préparation',createdAt:now()},
+    {id:'BLH-1002',client:'Sarra B',phone:'+213770223344',wilaya:'Oran',address:'Es-Senia',weight:12,cod:8900,price:calcPrice(12),status:'En cours de livraison',createdAt:now()},
+    {id:'BLH-1003',client:'Mounir H',phone:'+213540445566',wilaya:'Constantine',address:'El Khroub',weight:8,cod:4200,price:calcPrice(8),status:'Livré',createdAt:now()}
+  ];
+  db.seeded=true; save(db);
+}
+function now(){return new Date().toISOString().slice(0,16).replace('T',' ')}
+function nf(n){return new Intl.NumberFormat('fr-DZ').format(Number(n||0))}
+function uid(){return 'BLH-'+Math.floor(100000+Math.random()*900000)}
+function calcPrice(w){const s=db.settings; if(!w||w<=s.thresholdKg) return s.basePrice; return s.basePrice+Math.ceil(w-s.thresholdKg)*s.extraPerKg}
+
+/* ====== Auth simple ====== */
+let SESSION=JSON.parse(localStorage.getItem('BLH_SESSION')||'null');
+function loginView(){
+  const c=document.createElement('div'); c.className='card login';
+  c.innerHTML=`
+    <h2>Connexion</h2>
+    <div class="muted">Comptes démo : admin/admin • livreur/livreur • client/client</div>
+    <div class="grid" style="margin-top:10px">
+      <input id="lu" placeholder="Utilisateur">
+      <input id="lp" type="password" placeholder="Mot de passe">
+      <button class="btn" id="lb">Se connecter</button>
+    </div>`;
+  c.querySelector('#lb').onclick=()=>{
+    const u=c.querySelector('#lu').value.trim(), p=c.querySelector('#lp').value.trim();
+    const user=db.users.find(x=>x.u===u && x.p===p);
+    if(!user) return alert('Identifiants invalides');
+    SESSION={u:user.u,role:user.role,name:user.name};
+    localStorage.setItem('BLH_SESSION', JSON.stringify(SESSION));
+    renderTabs(); goHome();
+  };
+  renderView(c);
+}
+function logout(){ SESSION=null; localStorage.removeItem('BLH_SESSION'); renderTabs(); loginView(); }
+
+/* ====== Routing & Tabs ====== */
+const MAP={
+  admin:  [['dashboard','Direction'],['orders','Commandes'],['tariffs','Tarifs'],['labels','Étiquettes'],['export','Export'],['courier','Livreur'],['client','Client'],['logout','Déconnexion']],
+  courier:[['courier','Livreur'],['client','Client'],['logout','Déconnexion']],
+  client: [['client','Client'],['logout','Déconnexion']],
+  guest:  [['login','Connexion']]
+};
+function renderTabs(active){
+  const role=SESSION?.role||'guest'; const tabs=MAP[role]; const nav=document.getElementById('tabs'); nav.innerHTML='';
+  tabs.forEach(([k,lab])=>{const b=document.createElement('div'); b.className='tab'+(k===active?' active':''); b.textContent=lab; b.onclick=()=>route(k); nav.appendChild(b);});
+}
+function renderView(el){const v=document.getElementById('view'); v.innerHTML=''; v.appendChild(el)}
+function route(k){
+  renderTabs(k);
+  const R={login:loginView,dashboard,orders,tariffs,labels,vexport,courier,client,logout:logout};
+  (R[k]||loginView)();
+}
+function goHome(){ if(!SESSION) return route('login'); if(SESSION.role==='admin') route('dashboard'); else if(SESSION.role==='courier') route('courier'); else route('client'); }
+
+/* ====== Vues ====== */
+function dashboard(){
+  if(!SESSION||SESSION.role!=='admin') return loginView();
+  const total=db.orders.length,
+        liv=db.orders.filter(o=>o.status==='Livré').length,
+        enc=db.orders.filter(o=>o.status==='En cours de livraison').length,
+        prep=db.orders.filter(o=>o.status==='En préparation').length,
+        cod=db.orders.reduce((a,o)=>a+(o.status==='Livré'?(o.cod||0):0),0);
+
+  const c=document.createElement('div'); const grid=document.createElement('div'); grid.className='grid grid2';
+  const left=document.createElement('div'); left.className='card';
+  left.innerHTML=`
+    <h2>Tableau de bord</h2>
+    <div class="grid grid3" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi"><div class="muted">Commandes</div><div class="v">${nf(total)}</div></div>
+      <div class="kpi"><div class="muted">En préparation</div><div class="v">${nf(prep)}</div></div>
+      <div class="kpi"><div class="muted">En cours</div><div class="v">${nf(enc)}</div></div>
+      <div class="kpi"><div class="muted">Livrées</div><div class="v">${nf(liv)}</div></div>
+      <div class="kpi"><div class="muted">COD encaissé</div><div class="v">${nf(cod)} DA</div></div>
+      <div class="kpi"><div class="muted">Tarif</div><div class="v">${nf(db.settings.basePrice)} DA ≤ ${db.settings.thresholdKg}kg</div></div>
+    </div>`;
+  const right=document.createElement('div'); right.className='card'; right.innerHTML='<h2>Dernières commandes</h2>';
+  db.orders.slice(0,6).forEach(o=>{
+    const r=document.createElement('div'); r.className='row'; r.style.justifyContent='space-between';
+    r.style.borderTop='1px solid #edf0ee'; r.style.padding='8px 0';
+    r.innerHTML=`<div><strong>${o.id}</strong> — ${o.client} • ${o.wilaya}</div><div class="pill">${o.status}</div>`;
+    right.appendChild(r);
+  });
+  grid.appendChild(left); grid.appendChild(right); c.appendChild(grid); renderView(c);
+}
+
+function orders(){
+  if(!SESSION||SESSION.role!=='admin') return loginView();
+  const wrap=document.createElement('div');
+
+  const create=document.createElement('div'); create.className='card'; create.innerHTML='<h2>Créer une commande</h2>';
+  const form=document.createElement('form'); form.className='grid grid2'; form.style.gridTemplateColumns='1fr 1fr';
+  form.innerHTML=`
+    <input placeholder="Nom du client" required>
+    <input placeholder="Téléphone" required>
+    <input placeholder="Wilaya (ex: Alger)" value="Alger">
+    <input placeholder="Adresse complète" required>
+    <input type="number" step="0.1" placeholder="Poids (kg)" required>
+    <input type="number" placeholder="Montant COD (DA)">
+    <div style="grid-column:1/-1" class="row"><div class="pill">Prix : <span id="calcp">0</span> DA</div><div style="margin-left:auto"></div><button class="btn">Créer</button></div>`;
+  create.appendChild(form);
+  const [nameI, phoneI, wilayaI, addrI, weightI, codI]=form.querySelectorAll('input');
+  const calcSpan=form.querySelector('#calcp');
+  weightI.oninput=()=>calcSpan.textContent=nf(calcPrice(parseFloat(weightI.value||0)));
+  form.onsubmit=(e)=>{
+    e.preventDefault();
+    const w=parseFloat(weightI.value||0);
+    const order={id:uid(),client:nameI.value,phone:phoneI.value,wilaya:wilayaI.value,address:addrI.value,weight:w,cod:Number(codI.value||0),price:calcPrice(w),status:'En préparation',createdAt:now()};
+    db.orders.unshift(order); save(db); alert('Commande créée : '+order.id); orders();
+  };
+
+  const list=document.createElement('div'); list.className='card';
+  list.innerHTML=`<h2>Toutes les commandes</h2><div style="margin-bottom:8px"><input id="q" placeholder="Recherche..."></div>`;
+  const tableWrap=document.createElement('div'); list.appendChild(tableWrap);
+
+  function renderTable(filter=''){
+    tableWrap.innerHTML='';
+    const t=document.createElement('table');
+    t.innerHTML='<thead><tr><th>N°</th><th>Client</th><th>Wilaya</th><th>Adresse</th><th>Poids</th><th>Prix</th><th>COD</th><th>Statut</th><th>Action</th></tr></thead>';
+    const tb=document.createElement('tbody');
+    db.orders.filter(o=>{
+      const s=(filter||'').toLowerCase();
+      return !s || (o.id+o.client+o.wilaya+o.address+o.status).toLowerCase().includes(s);
+    }).forEach(o=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${o.id}</td><td>${o.client}</td><td>${o.wilaya}</td><td>${o.address}</td><td>${o.weight||0}</td><td>${nf(o.price)}</td><td>${nf(o.cod||0)}</td><td></td><td></td>`;
+      const st=tr.children[7]; const sel=document.createElement('select');
+      ['En préparation','En cours de livraison','Livré','Retour'].forEach(s=>{const op=document.createElement('option'); op.value=s; op.textContent=s; if(o.status===s) op.selected=true; sel.appendChild(op);});
+      sel.onchange=()=>{o.status=sel.value; save(db)};
+      st.appendChild(sel);
+      const act=tr.children[8]; const b=document.createElement('button'); b.className='btn'; b.textContent='Étiquette'; b.onclick=()=>makeLabel(o); act.appendChild(b);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); tableWrap.appendChild(t);
+  }
+  list.querySelector('#q').oninput=(e)=>renderTable(e.target.value);
+  renderTable('');
+
+  wrap.appendChild(create); wrap.appendChild(list); renderView(wrap);
+}
+
+function tariffs(){
+  if(!SESSION||SESSION.role!=='admin') return loginView();
+  const c=document.createElement('div');
+  const card=document.createElement('div'); card.className='card'; card.innerHTML='<h2>Tarifs (mêmes pour toutes les wilayas)</h2>';
+  const f=document.createElement('form'); f.className='grid grid3'; f.style.gridTemplateColumns='1fr 1fr 1fr';
+  f.innerHTML=`
+    <div><label>Prix de base (DA)</label><input type="number" value="${db.settings.basePrice}"></div>
+    <div><label>Seuil kg</label><input type="number" value="${db.settings.thresholdKg}"></div>
+    <div><label>Supplément / kg</label><input type="number" value="${db.settings.extraPerKg}"></div>
+    <div style="grid-column:1/-1;display:flex;justify-content:flex-end;margin-top:8px"><button class="btn">Enregistrer</button></div>`;
+  f.onsubmit=(e)=>{
+    e.preventDefault();
+    const i=f.querySelectorAll('input');
+    db.settings.basePrice=Number(i[0].value||0);
+    db.settings.thresholdKg=Number(i[1].value||0);
+    db.settings.extraPerKg=Number(i[2].value||0);
+    save(db); alert('Tarifs enregistrés');
+  };
+  card.appendChild(f);
+
+  const sim=document.createElement('div'); sim.className='card'; sim.style.marginTop='10px';
+  sim.innerHTML='<h3>Simulation</h3><div class="row"><input type="number" placeholder="Poids (kg)"><button>Calculer</button><div class="pill" id="simRes">—</div></div>';
+  sim.querySelector('button').onclick=()=>{const kg=Number(sim.querySelector('input').value||0); sim.querySelector('#simRes').textContent=nf(calcPrice(kg))+' DA';};
+  c.appendChild(card); c.appendChild(sim); renderView(c);
+}
+
+/* ====== QR (placeholder) + Étiquettes ====== */
+(function(){ window.QR=window.QR||{}; window.QR.dataURL=function(text,size){const s=size||140,c=document.createElement('canvas');c.width=s;c.height=s;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,s,s);x.fillStyle='#000';x.fillRect(8,8,40,40);x.fillRect(s-48,8,40,40);x.fillRect(8,s-48,40,40);for(let i=0;i<6;i++){for(let j=0;j<6;j++){if(Math.random()>0.6)x.fillRect(60+i*10,60+j*10,8,8)}};x.fillStyle='#fff';x.font='10px Arial';x.fillText('BLH', s/2-12, s/2+4);return c.toDataURL('image/png');};})();
+function makeLabel(o){
+  const pr=document.getElementById('printRoot'); pr.style.display='flex'; pr.innerHTML='';
+  const lab=document.createElement('div'); lab.className='label';
+  const qr=QR.dataURL(JSON.stringify({id:o.id,w:o.wilaya,p:o.phone||''}), 120);
+  lab.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div style="font-weight:800;color:#0f3d27">BLH DELIVERY</div>
+    <img src="${qr}" style="width:90px;height:90px;border:1px solid #e5e7eb;border-radius:8px"></div>
+    <div style="margin-top:8px"><strong>N° : ${o.id}</strong></div>
+    <div>Client : ${o.client}</div>
+    <div>Tél : ${o.phone||''}</div>
+    <div>Adr : ${o.address} — ${o.wilaya}</div>
+    <div style="margin-top:6px">Poids : ${o.weight} kg • Prix : ${nf(o.price)} DA</div>
+    <div>COD : ${nf(o.cod||0)} DA</div>
+    <div class="small muted" style="margin-top:6px">QR de suivi interne</div>`;
+  pr.appendChild(lab);
+  setTimeout(()=>window.print(),200);
+}
+function labels(){
+  if(!SESSION) return loginView();
+  const list=document.createElement('div'); list.className='card';
+  list.innerHTML='<h2>Étiquettes</h2><div class="muted">Clique “Imprimer” pour générer PDF/Impression.</div>';
+  const grid=document.createElement('div'); grid.className='grid';
+  db.orders.slice(0,80).forEach(o=>{
+    const row=document.createElement('div'); row.className='row'; row.style.justifyContent='space-between'; row.style.border='1px solid #edf0ee'; row.style.padding='8px'; row.style.borderRadius='8px';
+    const left=document.createElement('div'); left.innerHTML=`<strong>${o.id}</strong> — ${o.client} • ${o.wilaya}`;
+    const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Imprimer'; btn.onclick=()=>makeLabel(o);
+    row.appendChild(left); row.appendChild(btn); grid.appendChild(row);
+  });
+  list.appendChild(grid); renderView(list);
+}
+
+/* ====== Export Excel ====== */
+function vexport(){
+  if(!SESSION) return loginView();
+  const card=document.createElement('div'); card.className='card';
+  card.innerHTML='<h2>Export Excel</h2><div class="muted">Télécharge un .xls compatible Excel.</div><div style="margin-top:8px"><button class="btn" id="expBtn">Exporter les commandes</button></div>';
+  card.querySelector('#expBtn').onclick=exportExcel; renderView(card);
+}
+function exportExcel(){
+  const rows=[['ID','Client','Téléphone','Wilaya','Adresse','Poids(kg)','Prix(DA)','COD(DA)','Statut','Créée le']]
+    .concat(db.orders.map(o=>[o.id,o.client,o.phone||'',o.wilaya,o.address,String(o.weight||0),String(o.price||0),String(o.cod||0),o.status,o.createdAt]));
+  const xmlH=`<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Commandes"><Table>`;
+  const xmlR=rows.map(r=>`<Row>`+r.map(c=>`<Cell><Data ss:Type="String">${String(c).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</Data></Cell>`).join('')+`</Row>`).join('');
+  const xmlF=`</Table></Worksheet></Workbook>`;
+  const blob=new Blob([xmlH+xmlR+xmlF],{type:'application/vnd.ms-excel'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='BLH_Commandes.xls'; a.click();
+}
+
+/* ====== Espace Livreur / Client ====== */
+function courier(){
+  if(!SESSION||!(SESSION.role==='courier'||SESSION.role==='admin')) return loginView();
+  const card=document.createElement('div'); card.className='card';
+  card.innerHTML='<h2>Espace livreur</h2><div class="muted">Mets à jour un colis.</div>';
+  const row=document.createElement('div'); row.className='row'; row.style.marginTop='8px';
+  const inp=document.createElement('input'); inp.placeholder='Ex: BLH-1001';
+  const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Chercher';
+  row.appendChild(inp); row.appendChild(btn);
+  const res=document.createElement('div'); res.style.marginTop='10px';
+  btn.onclick=()=>{
+    const id=(inp.value||'').trim().toUpperCase(); const o=db.orders.find(x=>x.id===id); res.innerHTML='';
+    if(!o){res.appendChild(msg('Colis introuvable.')); return;}
+    const box=document.createElement('div'); box.className='card';
+    box.innerHTML=`<div style="font-weight:700">${o.id} • ${o.client}</div><div class="muted">${o.address} — ${o.wilaya}</div><div style="margin-top:8px">Statut actuel : <strong>${o.status}</strong></div>`;
+    const actions=document.createElement('div'); actions.className='row'; actions.style.marginTop='8px';
+    const b1=document.createElement('button'); b1.textContent='En cours de livraison';
+    const b2=document.createElement('button'); b2.className='btn'; b2.textContent='Livré';
+    const b3=document.createElement('button'); b3.textContent='Retour';
+    b1.onclick=()=>{o.status='En cours de livraison'; save(db); alert('Statut mis à jour');};
+    b2.onclick=()=>{o.status='Livré'; save(db); alert('Statut mis à jour');};
+    b3.onclick=()=>{o.status='Retour'; save(db); alert('Statut mis à jour');};
+    actions.appendChild(b1); actions.appendChild(b2); actions.appendChild(b3);
+    box.appendChild(actions); res.appendChild(box);
+  };
+  card.appendChild(row); card.appendChild(res); renderView(card);
+}
+function client(){
+  const card=document.createElement('div'); card.className='card';
+  card.innerHTML='<h2>Espace client</h2><div class="muted">Suivi par numéro de suivi.</div>';
+  const row=document.createElement('div'); row.className='row'; row.style.marginTop='8px';
+  const inp=document.createElement('input'); inp.placeholder='Ex: BLH-1002';
+  const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Suivr
+  {
+  "name": "BLH DELIVERY",
+  "short_name": "BLH",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f7a4c",
+  "icons": []
+}
+const CACHE = "blh-v1";
+const ASSETS = ["./","index.html","manifest.json"];
+
+self.addEventListener("install", e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+});
+
+self.addEventListener("activate", e => {
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+  );
+});
+
+self.addEventListener("fetch", e => {
+  e.respondWith(
+    caches.match(e.request).then(res => res || fetch(e.request).catch(()=>caches.match("index.html")))
+  );
+});
