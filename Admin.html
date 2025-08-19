@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin - BLH Delivery</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h2>Connexion Admin</h2>
+  <input type="password" id="password" placeholder="Mot de passe">
+  <button onclick="login()">Entrer</button>
+
+  <div id="adminPanel" style="display:none;">
+    <h2>Tableau des prix</h2>
+    <input id="tarif" placeholder="Nouveau tarif">
+    <button onclick="ajouterTarif()">Ajouter</button>
+    <ul id="listeTarifs"></ul>
+
+    <h2>Livraisons</h2>
+    <input id="colis" placeholder="Nouveau colis">
+    <button onclick="ajouterColis()">Ajouter</button>
+    <ul id="listeColis"></ul>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
